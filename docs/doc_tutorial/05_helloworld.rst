@@ -2,7 +2,7 @@
 Hello World
 ========================================
 
-In this tutorial, we will create a basic web project that makes use of flare to create a simple web site.
+In this tutorial, we will create a basic project that makes use of flare to create a simple web-app.
 
 Project setup
 --------------------
@@ -40,15 +40,12 @@ A simple ``index.html`` file that uses flare might now look like this:
                     fetch: {
                         "flare": {
                             "path": "flare/flare"
-                        },
-                        "helloworld": {
-                            "path": "helloworld"
                         }
                     },
                     kickoff:
     `
-    from helloworld import *
-    helloworld.HelloWorld("Hello module world!").show()
+    from flare import *
+    flare.popup.Alert("Hello World")
     `
                 });
             });
