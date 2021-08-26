@@ -2,6 +2,12 @@
 
 This file documents any relevant changes.
 
+## [1.0.3] - 2021-08-20
+- Fix: updated relational style
+
+## [1.0.2] - 2021-08-20
+- Fix: edit widget for relational bone didn't work properly due unclosed <div>-tag
+
 ## [1.0.1] - 2021-08-19
 - Fix: webworker now can be used with zipped application
 

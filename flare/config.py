@@ -23,11 +23,13 @@ conf = {
     "defaultLanguage": "de",
     "flare.icon.svg.embedding.path": "/static/svgs",
     "flare.icon.fallback.error": "icon-error",
+    "flare.icon.cache":{},
     "flare.language.current": "de",
+    "saveEval.allowedCallables":{"translate": translate}
 }
 
 # Assign SafeEval as htmlExpressionEvaluator
-core.htmlExpressionEvaluator = SafeEval({"translate": translate})
+core.htmlExpressionEvaluator = SafeEval(conf["saveEval.allowedCallables"])
 
 # Merge view_conf into main config
 from flare.views import conf as view_conf
