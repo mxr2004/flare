@@ -4,6 +4,7 @@ from flare.forms import boneSelector, InvalidBoneValueException
 from flare.network import NetworkService
 from flare.button import Button
 from flare.event import EventDispatcher
+from flare.observable import StateHandler
 
 
 @html5.tag("flare-form")
@@ -39,11 +40,17 @@ class viurForm(html5.Form):
         self["method"] = "POST"
         self["action"] = f"{self.moduleName}/{self.actionName}"
 
-        if structure:
+        if isinstance(structure, list):
             self.structure = {k: v for k, v in structure}
+        else:
+            self.structure = structure
 
         self.formSuccessEvent = EventDispatcher("formSuccess")
         self.formSuccessEvent.register(self)
+
+        self.state = StateHandler( ["submitStatus"] )
+        self.state.register("submitStatus",self)
+
 
         self.addClass("form")
         self.sinkEvent("onChange")
@@ -84,7 +91,8 @@ class viurForm(html5.Form):
                 continue
 
             bonefield = boneField(key, self)
-            bonefield.onAttach()  # we need a better solution
+            bonefield.onAttach() #needed for value loading!
+
             self.appendChild(bonefield)
 
     def registerField(self, key, widget):
@@ -123,6 +131,7 @@ class viurForm(html5.Form):
                 boneField.show()
 
     def submitForm(self):
+        self.state.updateState("submitStatus","sending")
         res = self.collectCurrentFormValues()
 
         NetworkService.request(
@@ -149,11 +158,13 @@ class viurForm(html5.Form):
 
             try:
                 res[key] = widget.serialize()
-                if res[key] is None:
+                if res[key] is None or res[key] == []:
                     res[key] = ""
 
-            except InvalidBoneValueException:
+            except InvalidBoneValueException as e:
+                print(e)
                 pass
+
         # if validityCheck:
         # 	return None
         return res
@@ -178,11 +189,15 @@ class viurForm(html5.Form):
             self.errors = resp["errors"]
             self.handleErrors()
 
+        self.state.updateState("submitStatus", "finished")
+
     def handleErrors(self):
         for error in self.errors:
-            if error["fieldPath"] in self.bones:
-                boneField = self.bones[error["fieldPath"]]  # todo dependency errors
-                if (error["severity"] % 2 == 0 and boneField["required"]) or (
+            if error["fieldPath"][0] in self.bones:
+                boneName = error["fieldPath"][0]
+                boneField = self.bones[boneName]  # todo dependency errors
+                boneStructure = boneField.structure[boneField.boneName]
+                if (error["severity"] % 2 == 0 and boneStructure["required"]) or (
                     error["severity"] % 2 == 1
                 ):  # invalid
 
@@ -216,34 +231,48 @@ class viurForm(html5.Form):
             # language=HTML
             self.prependChild(
                 """
-				<div [name]="errorhint" class="msg is-active msg--error "></div>
+				<div [name]="errorhint" class="msg is-active msg--error " style="flex-direction: column;"></div>
 			"""
             )
 
         self.errorhint.removeAllChildren()
         for error in self.errors:
-            if error["fieldPath"] in self.bones:
-                boneField = self.bones[error["fieldPath"]]  # todo dependency errors
-                if error["severity"] == 1 or error["severity"] == 3:  # invalid
+            if error["fieldPath"][0] in self.bones:
+                boneName = error["fieldPath"][0]
+                boneField = self.bones[boneName]  # todo dependency errors
+                boneStructure = boneField.structure[boneField.boneName]
+                if (error["severity"] % 2 == 0 and boneStructure["required"]) or (
+                        error["severity"] % 2 == 1
+                ):  # invalid
+
                     # language=HTML
                     self.errorhint.appendChild(
                         """<span class="flr-bone--error">{{boneDescr}}: {{error}} </span>""",
-                        boneDescr=boneField.structure[boneField.boneName].get(
+                        boneDescr=boneStructure.get(
                             "descr", boneField.boneName
                         ),
                         error=error["errorMessage"],
                     )
 
+        self.errorhint.element.scrollIntoView()
+
     def actionFailed(self, req, *args, **kwargs):
         logging.debug("FAILED: %r", req)
+        self.state.updateState("submitStatus", "failed")
 
     def onFormSuccess(self, event):
         self.createFormSuccessMessage()
 
+    def onSubmitStatusChanged(self,value,*args,**kwargs):
+        if value=="sending":
+            self.addClass("is-loading")
+        else:
+            self.removeClass("is-loading")
+
 
 @html5.tag("flare-form-field")
 class boneField(html5.Div):
-    def __init__(self, boneName=None, form=None, defaultvalue=None, hidden=False):
+    def __init__(self, boneName=None, form=None, defaultvalue=None, hidden=False, filter=None):
         logging.debug("boneField: %r, %r, %r", boneName, form, defaultvalue)
         super().__init__()
         self.boneName = boneName
@@ -252,11 +281,11 @@ class boneField(html5.Div):
         self.hidden = hidden
         self.placeholder = False
         self.defaultvalue = defaultvalue
+        self.filter = filter
 
         self.formloaded = False
 
     def onAttach(self):
-
         if not self.formloaded:
             if "boneName" not in dir(self):
                 logging.debug("Please add boneName attribute to {}", self)
@@ -297,13 +326,18 @@ class boneField(html5.Div):
                     descrLbl,
                     self.bonewidget,
                     hasError,
-                ) = boneFactory.boneWidget(self.label)
+                ) = boneFactory.boneWidget(self.label,filter=self.filter)
+
+                self.bonelabel = descrLbl
 
             except Exception as e:
                 logging.exception(e)
                 self.bonewidget = html5.Div("Bone not Found: %s" % self.boneName)
                 self.appendChild(self.bonewidget)
                 return 0
+
+            self.appendChild(containerDiv)
+            containerDiv.onAttach() #fixme
 
             if self.boneName in self.form.hide or self.hidden:
                 self._setHidden(True)
@@ -313,7 +347,7 @@ class boneField(html5.Div):
             self.form.registerField(self.boneName, self)
 
             self.sinkEvent("onChange")
-            self.appendChild(containerDiv)
+
 
             if self.defaultvalue:
                 self.skel[
@@ -360,6 +394,7 @@ class boneField(html5.Div):
         self.defaultvalue = val
 
     def labelTemplate(self):
+        return False
         """Default label."""
         # language=HTML
         return """<label [name]="bonelabel" class="input-group-item--first label flr-label flr-label--{{type}} flr-label--{{boneName}}">{{descr}}</label>"""
@@ -398,8 +433,14 @@ class sendForm(Button):
             )
             self.element.innerHTML = "ERROR"
             self.disable()
-
+        self.form.state.register("submitStatus", self)
         self.callback = self.sendViurForm
 
     def sendViurForm(self, widget):
         self.form.submitForm()
+
+    def onSubmitStatusChanged(self, value, *args, **kwargs):
+        if value == "sending":
+            self.addClass("is-loading")
+        else:
+            self.removeClass("is-loading")

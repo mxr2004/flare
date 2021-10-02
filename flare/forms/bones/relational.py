@@ -9,8 +9,8 @@ from flare.forms.widgets.relational import InternalEdit
 from flare.forms.widgets.tree import TreeLeafWidget, TreeNodeWidget
 from flare.forms.widgets.list import ListWidget
 from flare.config import conf
-from flare.forms import boneSelector, formatString, displayString, moduleWidgetSelector
-from .base import BaseBone, BaseEditWidget, BaseMultiEditWidget
+from flare.forms import boneSelector, formatString, displayStringHandler, moduleWidgetSelector
+from .base import BaseBone, BaseEditWidget, BaseMultiEditWidget, BaseMultiEditWidgetEntry
 
 
 def _getDefaultValues(structure):
@@ -92,21 +92,29 @@ class RelationalEditWidget(BaseEditWidget):
             return
 
         if display := self.bone.boneStructure["params"].get("display"):
-            displayWidgets = displayString(
+            displayWidgets = displayStringHandler(
                 display,
                 self.value,
                 self.bone.boneStructure,
                 self.language
             )
-
-            self.destWidget.replaceChild(displayWidgets or conf["emptyValue"])
+            if isinstance(self.destWidget,html5.Input):
+                self.destWidget["value"] = displayWidgets or conf["emptyValue"]
+            else:
+                self.destWidget.replaceChild(displayWidgets or conf["emptyValue"])
         else:
-            self.destWidget.replaceChild(
-                formatString(
+            fmtstr = formatString(
                     self.bone.formatString,
-                    {"value": self.value}
-                ) or conf["emptyValue"]
-            )
+                    self.value
+                )
+
+            if isinstance(self.destWidget,html5.Input):
+                self.destWidget["value"] = fmtstr or conf["emptyValue"]
+            else:
+                self.destWidget.replaceChild(
+                    fmtstr or conf["emptyValue"]
+                )
+
 
     def onChange(self, event):
         if self.dataWidget:
@@ -148,7 +156,7 @@ class RelationalEditWidget(BaseEditWidget):
 
             selector = selector(self.bone.destModule, **self.bone.destInfo)
 
-            conf["selectors"][self.bone.destModule] = selector
+            #conf["selectors"][self.bone.destModule] = selector
 
         # Set a context if configured so
         context = self.bone.boneStructure["params"].get("context")
@@ -187,7 +195,7 @@ class RelationalViewWidget(html5.Div):
 
         if self.value:
             if display := self.bone.boneStructure["params"].get("display"):
-                displayWidgets = displayString(
+                displayWidgets = displayStringHandler(
                     display,
                     value,
                     self.bone.boneStructure,
@@ -199,7 +207,7 @@ class RelationalViewWidget(html5.Div):
                 self.replaceChild(
                     formatString(
                         self.bone.formatString,
-                        {"value": self.value}
+                        self.value
                     ) or conf["emptyValue"]
                 )
 
@@ -266,6 +274,10 @@ class RelationalBone(BaseBone):
         self.formatString = self.boneStructure["format"]
         self.destModule = self.boneStructure["module"]
         self.destInfo = conf["modules"].get(self.destModule, {"handler": "list"})
+
+        if "filter" in kwargs and kwargs["filter"]:
+            self.destInfo.update({"filter":kwargs["filter"]})
+
         self.destStructure = self.boneStructure["relskel"]
         self.dataStructure = self.boneStructure["using"]
 
@@ -361,7 +373,7 @@ class FileEditDirectWidget(RelationalEditWidget):
                 <div class="flr-bone-widgets">
                     <div class="flr-widgets-item input-group" [name]='filerow'>
                         <flare-input [name]="destWidget" readonly>
-                        <flare-button [name]="selectBtn" class="btn--select input-group-item--last" text="Select" icon="icon-select"></flare-button>
+                        <flare-button [name]="selectBtn" class="btn--select input-group-item--last is-hidden" text="Select" icon="icon-select"></flare-button>
                         <flare-button hidden [name]="deleteBtn" class="btn--delete" text="Delete" icon="icon-delete"></flare-button>
                     </div>
                     <div class="flr-widgets-item">
@@ -376,6 +388,7 @@ class FileEditDirectWidget(RelationalEditWidget):
             """
             )
         )
+
 
         self.filerow.hide()
 
@@ -406,15 +419,16 @@ class FileEditDirectWidget(RelationalEditWidget):
                 self.selectBtn.removeClass("input-group-item--last")
 
     def onChange(self, event):
+        event = event.to_py()
         if event.target.files:
-            file = event.target.files[0]
+            file = list(event.target.files)[0]
             self.startUpload(file)
 
     def startUpload(self, file):
         uploader = Uploader(
-            file, None, showResultMessage=False, module=self.bone.module
+            file, None, showResultMessage=False, module=self.bone.destModule
         )
-        self.appendChild(uploader)
+        self.uploadResult.appendChild(uploader)
         uploader.uploadSuccess.register(self)
         uploader.uploadFailed.register(self)
 
@@ -448,7 +462,7 @@ class FileEditDirectWidget(RelationalEditWidget):
         self.previewImg.setFile(entry)
         self.updateString()
         self.updateWidget()
-        self.removeChild(uploader)
+        #self.removeChild(uploader)
         self.uploadResult.hide()
         self.filerow.show()
         # self.uploadResult.element.innerHTML = "Upload erfolgreich"
@@ -486,9 +500,150 @@ class FileViewWidget(RelationalViewWidget):
         self.replaceChild(FilePreviewImage(value["dest"] if value else None))
 
 
+
+class FileMultiEditDirectWidget(html5.Div):
+    """Class for encapsulating multiple bones inside a container."""
+
+    entryFactory = BaseMultiEditWidgetEntry
+    style = ["flr-value-container"]
+
+    def __init__(self, bone, widgetFactory: callable, **kwargs):
+        # language=HTML
+        super().__init__(
+            """
+			<div [name]="actions" class="flr-bone-actions input-group" style="width:100%">
+			    <div class="flr-bone-widgets">
+				<div [name]="dropArea" class="supports-upload" style="position:relative; border:2px dashed #ccc; padding:10px 10px 25px; margin: 0 -2px;">
+                    <flare-svg-icon value='icon-upload-file' title='Upload'> </flare-svg-icon>
+                    <label for="inplace-upload" class="flr-inplace-upload-label"><strong>Datei auswählen</strong><span [name]="dropText"> oder hierhin ziehen</span>. </label>
+                    <input id="inplace-upload" class="flr-inplace-upload" type="file" multiple [name]="files" files selected />
+                </div>
+                </div>
+                <p [name]="uploadResult" style="display: none;"></p>
+			</div>
+			<div [name]="widgets" class="flr-bone-multiple-wrapper"></div>
+
+		"""
+        )
+
+        self.bone = bone
+        self.widgetFactory = widgetFactory
+        self.kwargs = kwargs
+
+        self.widgets._widgetToDrag = None
+        self.widgets._widgetIsOver = None  # "We have clearance, Clarence." - "Roger, Roger. What's our vector, Victor?"
+
+        for event in ["onDragEnter", "onDragOver", "onDragLeave", "onDrop"]:
+            setattr(self.dropArea, event, getattr(self, event))
+            self.dropArea.sinkEvent(event)
+
+        self.sinkEvent("onChange")
+
+        if len(self.widgets.children()) == 0:
+            self.widgets.hide()
+
+        if self.bone.boneStructure["readonly"]:
+            self.addBtn.hide()
+
+    def onChange(self, event):
+        event = event.to_py()
+        if event.target.files:
+            for x in list(event.target.files):
+                self.startUpload(x)
+
+    def startUpload(self, file):
+        uploader = Uploader(
+            file, None, showResultMessage=False, module=self.bone.destModule
+        )
+        self.uploadResult.appendChild(uploader)
+        uploader.uploadSuccess.register(self)
+        uploader.uploadFailed.register(self)
+
+    def onDragEnter(self, event):
+        console.log("onDragEnter", event)
+        event.stopPropagation()
+        event.preventDefault()
+
+    def onDragOver(self, event):
+        console.log("onDragEnter", event)
+        event.stopPropagation()
+        event.preventDefault()
+
+    def onDragLeave(self, event):
+        console.log("onDragLeave", event)
+        event.stopPropagation()
+        event.preventDefault()
+
+    def onDrop(self, event):
+        self.uploadResult["style"]["display"] = "none"
+        event.stopPropagation()
+        event.preventDefault()
+        files = event.dataTransfer.files
+        if files.length:  # only pick first file!!!
+            for x in range(0,files.length):
+                currentFile = files.item(x)
+                self.startUpload(currentFile)
+
+    def onUploadSuccess(self, uploader, entry):
+        entry = self.addEntry({"dest":entry,"rel":None})
+        entry.focus()
+        return 0
+        self.destKey = entry["key"]
+        self.value = {"dest": entry, "rel": None}
+        self.previewImg.setFile(entry)
+        self.updateString()
+        self.updateWidget()
+        self.removeChild(uploader)
+        self.uploadResult.hide()
+        self.filerow.show()
+        # self.uploadResult.element.innerHTML = "Upload erfolgreich"
+        # self.uploadResult["style"]["display"] = "block"
+        if not self.bone.multiple:
+            self.dropArea.hide()
+
+    def onUploadFailed(self, uploader, errorCode):
+        self.removeChild(uploader)
+        self.uploadResult.element.innerHTML = (
+            "Upload abgebrochen mit Fehlercode {0}".format(errorCode)
+        )
+        self.uploadResult.show()
+
+
+
+    def addEntry(self, value=None):
+        entry = self.widgetFactory(self.bone, **self.kwargs)
+        if self.entryFactory:
+            entry = self.entryFactory(entry)
+
+        if value:
+            entry.unserialize(value)
+
+        self.widgets.appendChild(entry)
+        self.widgets.show()
+        return entry
+
+    def unserialize(self, value):
+        self.widgets.removeAllChildren()
+
+        if not isinstance(value, list):
+            return
+
+        for entry in value:
+            self.addEntry(entry)
+
+    def serialize(self):
+        ret = []
+        for widget in self.widgets:
+            value = widget.serialize()
+            if value:
+                ret.append(value)
+
+        return ret
+
 class FileDirectBone(TreeItemBone):
     editWidgetFactory = FileEditDirectWidget
     viewWidgetFactory = FileViewWidget
+    multiEditWidgetFactory = FileMultiEditDirectWidget
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -502,10 +657,11 @@ class FileDirectBone(TreeItemBone):
             "type"
         ] == "relational.tree.leaf.file" or skelStructure[boneName]["type"].startswith(
             "relational.tree.leaf.file."
-        )
+        ) and ("params" in skelStructure[boneName] and skelStructure[boneName]["params"] and
+               skelStructure[boneName]["params"].get("widget")=="direct")
 
 
-boneSelector.insert(3, FileDirectBone.checkFor, FileDirectBone)
+boneSelector.insert(7, FileDirectBone.checkFor, FileDirectBone)
 
 
 # --- fileBone ---
