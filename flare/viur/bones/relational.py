@@ -94,7 +94,9 @@ class RelationalEditWidget(BaseEditWidget):
         else:
             fmtstr = formatString(
                     self.bone.formatString,
-                    self.value
+                    self.value,
+                    self.bone.boneStructure,
+                    self.language
                 )
 
             if isinstance(self.destWidget,html5.Input):
@@ -184,7 +186,7 @@ class RelationalViewWidget(html5.Div):
                     display,
                     value,
                     self.bone.boneStructure,
-                    language=self.language,
+                    self.language,
                 )
 
                 self.replaceChild(displayWidgets or conf["emptyValue"])
@@ -192,7 +194,9 @@ class RelationalViewWidget(html5.Div):
                 self.replaceChild(
                     formatString(
                         self.bone.formatString,
-                        self.value
+                        self.value,
+                        self.bone.boneStructure,
+                        self.language,
                     ) or conf["emptyValue"]
                 )
 
