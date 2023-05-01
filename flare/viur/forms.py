@@ -91,7 +91,7 @@ class ViurForm(html5.Form):
             if key in self.ignore or (self.visible and key not in self.visible):
                 continue
 
-            bone_field = ViurFormBone(key, self)
+            bone_field = ViurFormBone(key, self, defaultvalue=bone.get("defaultvalue"))
             bone_field.onAttach()  # needed for value loading!  # fixme should be solved differently.
 
             # Hide invisible fields or fields with conditional flagging
@@ -367,7 +367,7 @@ class ViurFormBone(html5.Div):
                 logging.error("Missing moduleName attribute on referenced form %r", self.form)
 
             # self.form existiert und form hat skel und structure
-            if isinstance(self.form.structure, list):  # fixme: Muss das sein???
+            if isinstance(self.form.structure, list):
                 self.structure = {k: v for k, v in self.form.structure}
             else:
                 self.structure = self.form.structure
@@ -412,11 +412,11 @@ class ViurFormBone(html5.Div):
 
             self.sinkEvent("onChange")
 
-            if self.defaultValue:
-                # warning overrides server default
-                self.skel[self.boneName] = self.defaultValue
+            value = self.skel.get(self.boneName)
+            if value is None:
+                value = self.defaultValue
 
-            self.unserialize(self.skel.get(self.boneName))
+            self.unserialize(value)
             self.formloaded = True
 
     def onChange(self, event, *args, **kwargs):

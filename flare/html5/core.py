@@ -97,6 +97,25 @@ def domGetElementsByTagName(tag):
 __domParser = None
 
 
+def domParseString(string, mimetype="text/html"):
+    """
+    Parses the given string with the optionally given mimetype using JavaScript's DOM parser.
+    :param string: Any XML/HTML string processable by DOMParser.
+    :param mimetype: The mimetype to use.
+
+    :return: Returns the parsed document DOM.
+    """
+    global __domParser
+
+    if jseval is None:
+        return string
+
+    if __domParser is None:
+        __domParser = jseval("new DOMParser")
+
+    return __domParser.parseFromString(string, mimetype)
+
+
 def domConvertEncodedText(txt):
     """Convert HTML-encoded text (containing HTML entities) into its decoded string representation.
 
@@ -108,16 +127,8 @@ def domConvertEncodedText(txt):
     :param txt: The encoded text.
     :return: The decoded text.
     """
-    global __domParser
-
-    if jseval is None:
-        return txt
-
-    if __domParser is None:
-        __domParser = jseval("new DOMParser")
-
-    dom = __domParser.parseFromString("<!doctype html><body>" + str(txt), "text/html")
-    return dom.body.textContent
+    doc = domParseString("<!doctype html><body>" + str(txt))
+    return doc.body.textContent
 
 
 ########################################################################################################################
@@ -270,16 +281,8 @@ class _WidgetStyleWrapper(dict):
         self.targetWidget = targetWidget
         style = targetWidget.element.style
 
-        for key in dir(style):
-            # Convert JS-Style-Syntax to CSS Syntax (ie borderTop -> border-top)
-            realKey = ""
-            for currChar in key:
-                if currChar.isupper():
-                    realKey += "-"
-                realKey += currChar.lower()
-            val = style.getPropertyValue(realKey)
-            if val:
-                dict.__setitem__(self, realKey, val)
+        for key in style.object_values():
+            self[key] = style.getPropertyValue(key)
 
     def __setitem__(self, key, value):
         dict.__setitem__(self, key, value)
@@ -452,16 +455,16 @@ class Widget(object):
     def __getitem__(self, key):
         funcName = self._getTargetfuncName(key, "get")
 
-        if funcName in dir(self):
-            return getattr(self, funcName)()
+        if func := getattr(self, funcName, None):
+            return func()
 
         return None
 
     def __setitem__(self, key, value):
         funcName = self._getTargetfuncName(key, "set")
 
-        if funcName in dir(self):
-            return getattr(self, funcName)(value)
+        if func := getattr(self, funcName, None):
+            return func(value)
 
         raise ValueError(
             "{} is no valid attribute for {}".format(key, (self._tagName or str(self)))
@@ -1399,10 +1402,10 @@ class _attrFor(object):
 
 class _attrInputs(_attrRequired):
     def _getMaxlength(self):
-        return self.element.maxlength
+        return self.element.maxLength
 
     def _setMaxlength(self, val):
-        self.element.maxlength = val
+        self.element.maxLength = val
 
     def _getPlaceholder(self):
         return self.element.placeholder
